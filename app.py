@@ -5,11 +5,10 @@ import tensorflow as tf
 import cv2
 
 # --- PAGE CONFIG ---
-# This must be the first Streamlit command in your script
 st.set_page_config(
     page_title="AI Image Quality Analyzer",
     page_icon="📸",
-    layout="centered" # or "wide"
+    layout="centered"
 )
 
 
@@ -37,19 +36,18 @@ def analyze_image_issues(image):
     cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
     gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
     
-    # Blur Detection (Laplacian Variance)
     laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-    is_blurry = laplacian_var < 100 
+    # Let's make the threshold a bit more sensitive
+    is_blurry = laplacian_var < 120 
 
-    # Brightness Detection (Average Pixel Intensity)
     brightness = np.mean(gray)
-    is_dark = brightness < 70
+    is_dark = brightness < 80
 
     issues = []
     if is_blurry:
-        issues.append(f"⚠️ Potential Blur Detected (Variance: {laplacian_var:.2f})")
+        issues.append(f"⚠️ **Potential Blur Detected** (Sharpness Score: {laplacian_var:.2f})")
     if is_dark:
-        issues.append(f"⚠️ Potential Darkness Detected (Brightness: {brightness:.2f})")
+        issues.append(f"⚠️ **Potential Darkness Detected** (Brightness Score: {brightness:.2f})")
     
     return issues
 
@@ -100,19 +98,21 @@ if uploaded_file is not None:
             # OpenCV Heuristic Analysis
             issues = analyze_image_issues(image)
             
+            # ####################################################### #
+            # THIS IS THE NEW LOGIC TO REMOVE THE UNWANTED MESSAGE    #
+            # ####################################################### #
+            if score <= 0.5 and not issues:
+                issues.append("⚠️ **General low quality or lack of sharpness detected.**")
+            # ####################################################### #
+
             with st.expander("Show Technical Details"):
                 if score > 0.5:
                     st.write(f"The model is {score:.0%} confident this image is of good quality.")
+                    st.write("No specific technical issues were flagged.")
                 else:
                     st.write(f"The model is {1-score:.0%} confident this image is of bad quality.")
-                
-                if issues:
                     st.write("Further analysis found these potential issues:")
                     for issue in issues:
                         st.write(issue)
-                elif score > 0.5:
-                    st.write("No specific technical issues (blur, darkness) were flagged.")
-                else:
-                    st.write("AI predicts low quality, but specific issues (blur/darkness) were not strongly detected by our checks.")
 else:
     st.info("Please upload an image to begin the analysis.")
