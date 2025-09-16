@@ -22,7 +22,7 @@ model = load_model()
 
 
 # --- HELPER FUNCTIONS ---
-def preprocess_image(image):
+def preprocess_for_model(image):
     """Prepares the image for the AI model."""
     image = image.convert('RGB')
     image = image.resize((224, 224))
@@ -31,26 +31,28 @@ def preprocess_image(image):
     image_array = image_array / 255.0
     return image_array
 
-def analyze_image_issues(image):
-    """Analyzes a PIL image for specific quality issues using OpenCV."""
+def calculate_metrics(image):
+    """Calculates handcrafted image quality metrics using OpenCV."""
     cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
+    gray_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
+
+    brightness = np.mean(gray_image)
+    contrast = np.std(gray_image)
+    blurriness = cv2.Laplacian(gray_image, cv2.CV_64F).var()
     
-    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-    # Let's make the threshold a bit more sensitive
-    is_blurry = laplacian_var < 120 
+    blurred = cv2.GaussianBlur(gray_image, (5, 5), 0)
+    noise = np.std(gray_image - blurred)
 
-    brightness = np.mean(gray)
-    is_dark = brightness < 80
+    width, height = image.size
+    resolution = width * height
 
-    issues = []
-    if is_blurry:
-        issues.append(f"⚠️ **Potential Blur Detected** (Sharpness Score: {laplacian_var:.2f})")
-    if is_dark:
-        issues.append(f"⚠️ **Potential Darkness Detected** (Brightness Score: {brightness:.2f})")
-    
-    return issues
-
+    return {
+        "Brightness": brightness,
+        "Contrast": contrast,
+        "Sharpness (Higher is Better)": blurriness,
+        "Noise (Lower is Better)": noise,
+        "Resolution (Pixels)": resolution
+    }
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -59,13 +61,12 @@ with st.sidebar:
     This application leverages a Convolutional Neural Network (CNN) to classify image quality. 
     It was trained on a dataset of sharp and blurry images to distinguish between 'Good' and 'Bad' quality photos.
     
-    When an image is classified as 'Bad', additional checks using OpenCV are performed to detect specific issues like blurriness and darkness.
+    The AI's prediction is then combined with handcrafted metrics from OpenCV to generate a final quality score.
     """)
     st.header("Technology Stack")
     st.write("- TensorFlow/Keras (MobileNetV2)")
     st.write("- OpenCV")
     st.write("- Streamlit")
-
 
 # --- MAIN PAGE ---
 st.title("📸 AI-Powered Image Quality Analyzer")
@@ -76,43 +77,48 @@ uploaded_file = st.file_uploader("Choose an image to analyze...", type=["jpg", "
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
     
+    # Use columns to create the layout
     col1, col2 = st.columns(2)
     
     with col1:
-        st.image(image, caption='Your Uploaded Image', use_container_width=True)
+        st.image(image, caption='Uploaded Image', use_container_width=True)
 
     with col2:
-        with st.spinner('AI is analyzing the image...'):
+        with st.spinner('Analyzing image...'):
             # AI Model Prediction
-            processed_image = preprocess_image(image)
+            processed_image = preprocess_for_model(image)
             prediction = model.predict(processed_image)
-            score = prediction[0][0]
+            ai_confidence_score = prediction[0][0]
 
-            st.subheader("Analysis Results:")
+            # Calculate handcrafted metrics
+            metrics = calculate_metrics(image)
 
-            if score > 0.5:
-                st.success(f"**Result: Good Quality**")
+            # --- Scoring Logic ---
+            final_score = 50 + (ai_confidence_score - 0.5) * 80
+            if metrics["Sharpness (Higher is Better)"] > 200:
+                final_score += 5
+            if metrics["Resolution (Pixels)"] > 1000000:
+                final_score += 5
+            final_score = max(0, min(100, final_score))
+
+            # Determine Overall Assessment
+            if final_score >= 80:
+                assessment = "Excellent ⭐⭐⭐⭐⭐"
+            elif final_score >= 60:
+                assessment = "Good ⭐⭐⭐⭐"
+            elif final_score >= 40:
+                assessment = "Fair ⭐⭐⭐"
+            elif final_score >= 20:
+                assessment = "Poor ⭐⭐"
             else:
-                st.error(f"**Result: Bad Quality**")
+                assessment = "Very Poor ⭐"
 
-            # OpenCV Heuristic Analysis
-            issues = analyze_image_issues(image)
-            
-            # ####################################################### #
-            # THIS IS THE NEW LOGIC TO REMOVE THE UNWANTED MESSAGE    #
-            # ####################################################### #
-            if score <= 0.5 and not issues:
-                issues.append("⚠️ **General low quality or lack of sharpness detected.**")
-            # ####################################################### #
+            st.subheader("🌟 Predicted Quality Score")
+            st.metric(label="Score (out of 100)", value=f"{final_score:.2f}")
+            st.write(f"**Overall Assessment:** {assessment}")
 
-            with st.expander("Show Technical Details"):
-                if score > 0.5:
-                    st.write(f"The model is {score:.0%} confident this image is of good quality.")
-                    st.write("No specific technical issues were flagged.")
-                else:
-                    st.write(f"The model is {1-score:.0%} confident this image is of bad quality.")
-                    st.write("Further analysis found these potential issues:")
-                    for issue in issues:
-                        st.write(issue)
+            with st.expander("Show Handcrafted Metrics"):
+                for key, value in metrics.items():
+                    st.write(f"- **{key}:** {value:,.2f}") # Added comma for thousands separator
 else:
     st.info("Please upload an image to begin the analysis.")
